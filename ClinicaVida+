@@ -1,0 +1,252 @@
+import json
+from collections import deque
+from datetime import datetime
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+
+ARQUIVO = "pacientes.json"
+
+# ---------------- Persistência ----------------
+def salvar(pacientes):
+    with open(ARQUIVO, "w", encoding="utf-8") as f:
+        json.dump(pacientes, f, ensure_ascii=False, indent=2)
+
+def carregar():
+    try:
+        with open(ARQUIVO, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+    except json.JSONDecodeError:
+        print("Arquivo inválido. Iniciando lista vazia.")
+        return []
+
+pacientes = carregar()
+fila_atendimento = deque()
+
+# ---------------- Funções principais ----------------
+def calcular_idade(data_nasc_str):
+    try:
+        data_nasc = datetime.strptime(data_nasc_str, "%d/%m/%Y")
+        hoje = datetime.now()
+        idade = hoje.year - data_nasc.year - ((hoje.month, hoje.day) < (data_nasc.month, data_nasc.day))
+        return idade
+    except ValueError:
+        return None
+
+def somente_digitos(texto):
+    return "".join(ch for ch in texto if ch.isdigit())
+
+def cadastrar():
+    cadastro_win = tk.Toplevel(root)
+    cadastro_win.title("Cadastro de Paciente")
+    cadastro_win.geometry("320x380")
+
+    tk.Label(cadastro_win, text="Nome:").pack(pady=5)
+    nome_entry = tk.Entry(cadastro_win)
+    nome_entry.pack(pady=5)
+
+    tk.Label(cadastro_win, text="CPF (apenas números):").pack(pady=5)
+    cpf_entry = tk.Entry(cadastro_win)
+    cpf_entry.pack(pady=5)
+
+    tk.Label(cadastro_win, text="Data de nascimento (dd/mm/yyyy):").pack(pady=5)
+    data_entry = tk.Entry(cadastro_win)
+    data_entry.pack(pady=5)
+
+    # Inserir "/" automaticamente no campo de data
+    def formatar_data(event):
+        texto = data_entry.get()
+        texto = somente_digitos(texto)
+        if len(texto) >= 3:
+            texto = texto[:2] + "/" + texto[2:]
+        if len(texto) >= 6:
+            texto = texto[:5] + "/" + texto[5:]
+        data_entry.delete(0, tk.END)
+        data_entry.insert(0, texto)
+    data_entry.bind("<KeyRelease>", formatar_data)
+
+    tk.Label(cadastro_win, text="Telefone:").pack(pady=5)
+    telefone_entry = tk.Entry(cadastro_win)
+    telefone_entry.pack(pady=5)
+
+    def salvar_cadastro():
+        nome = nome_entry.get().strip()
+        cpf = somente_digitos(cpf_entry.get().strip())
+        data_nasc = data_entry.get().strip()
+        telefone = telefone_entry.get().strip()
+
+        # Validações
+        if not nome or not cpf:
+            messagebox.showwarning("Erro", "Nome e CPF são obrigatórios.")
+            return
+        if len(cpf) != 11:
+            messagebox.showwarning("Erro", "CPF deve ter 11 dígitos (apenas números).")
+            return
+        if any(p["cpf"] == cpf for p in pacientes):
+            messagebox.showwarning("Erro", "Já existe um paciente cadastrado com este CPF.")
+            return
+
+        idade = calcular_idade(data_nasc)
+        if idade is None or idade < 0 or idade > 120:
+            messagebox.showwarning("Erro", "Data de nascimento inválida.")
+            return
+
+        data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+        pacientes.append({
+            "nome": nome,
+            "cpf": cpf,
+            "data_nasc": data_nasc,
+            "idade": idade,
+            "telefone": telefone,
+            "data_hora_cadastro": data_hora
+        })
+        salvar(pacientes)
+        messagebox.showinfo("Sucesso", f"Paciente {nome} cadastrado com {idade} anos.")
+        cadastro_win.destroy()
+
+    tk.Button(cadastro_win, text="Salvar", command=salvar_cadastro).pack(pady=12)
+
+def estatisticas():
+    if not pacientes:
+        messagebox.showinfo("Estatísticas", "Nenhum paciente cadastrado.")
+        return
+    total = len(pacientes)
+    media = sum(p["idade"] for p in pacientes) / total
+    mais_novo = min(pacientes, key=lambda x: x["idade"])
+    mais_velho = max(pacientes, key=lambda x: x["idade"])
+    texto = (
+        f"Total de pacientes: {total}\n"
+        f"Idade média: {media:.1f}\n"
+        f"Mais novo: {mais_novo['nome']} ({mais_novo['idade']} anos)\n"
+        f"Mais velho: {mais_velho['nome']} ({mais_velho['idade']} anos)"
+    )
+    messagebox.showinfo("Estatísticas", texto)
+
+def buscar():
+    termo = simpledialog.askstring("Busca", "Digite o nome ou parte do nome:")
+    if not termo:
+        return
+    encontrados = [p for p in pacientes if termo.lower() in p["nome"].lower()]
+    if not encontrados:
+        messagebox.showinfo("Busca", "Paciente não encontrado.")
+        return
+    texto = ""
+    for p in encontrados:
+        texto += (
+            f"- {p['nome']} — CPF: {p['cpf']} — {p['idade']} anos — {p['telefone']} "
+            f"— Nasc.: {p['data_nasc']} — Cadastro: {p['data_hora_cadastro']}\n"
+        )
+    messagebox.showinfo("Resultado da busca", texto)
+
+def listar():
+    if not pacientes:
+        messagebox.showinfo("Listagem", "Nenhum paciente cadastrado.")
+        return
+    texto = "Lista de pacientes:\n"
+    for i, p in enumerate(pacientes, start=1):
+        texto += (
+            f"{i}. {p['nome']} — CPF: {p['cpf']} — {p['idade']} anos — {p['telefone']} "
+            f"— Nasc.: {p['data_nasc']} — Cadastro: {p['data_hora_cadastro']}\n"
+        )
+    messagebox.showinfo("Pacientes", texto)
+
+def adicionar_na_fila():
+    if not pacientes:
+        messagebox.showinfo("Fila", "Nenhum paciente cadastrado.")
+        return
+
+    fila_win = tk.Toplevel(root)
+    fila_win.title("Adicionar à Fila")
+    fila_win.geometry("320x260")
+
+    tk.Label(fila_win, text="Selecione o paciente:").pack(pady=5)
+    nomes = [f"{p['nome']} — CPF: {p['cpf']}" for p in pacientes]
+    var_nome = tk.StringVar(fila_win)
+    var_nome.set(nomes[0])
+    menu = tk.OptionMenu(fila_win, var_nome, *nomes)
+    menu.pack(pady=5)
+
+    tk.Label(fila_win, text="Horário desejado:").pack(pady=5)
+    horarios = [
+        "08:00", "08:30", "09:00", "09:30", "10:00",
+        "10:30", "11:00", "11:30", "14:00", "14:30",
+        "15:00", "15:30", "16:00", "16:30"
+    ]
+    var_horario = tk.StringVar(fila_win)
+    var_horario.set(horarios[0])
+    menu_horario = tk.OptionMenu(fila_win, var_horario, *horarios)
+    menu_horario.pack(pady=5)
+
+    def confirmar():
+        selecionado = var_nome.get()
+        # Extrai CPF do texto "Nome — CPF: 12345678901"
+        try:
+            cpf_sel = selecionado.split("CPF:")[1].strip()
+        except IndexError:
+            messagebox.showwarning("Erro", "Seleção inválida.")
+            return
+
+        paciente = next((p for p in pacientes if p["cpf"] == cpf_sel), None)
+        if not paciente:
+            messagebox.showwarning("Erro", "Paciente não encontrado.")
+            return
+
+        horario_selecionado = var_horario.get()
+        fila_atendimento.append({
+            "nome": paciente["nome"],
+            "cpf": paciente["cpf"],
+            "horario": horario_selecionado
+        })
+        messagebox.showinfo("Fila", f"{paciente['nome']} foi adicionado à fila para {horario_selecionado}.")
+        fila_win.destroy()
+
+    tk.Button(fila_win, text="Adicionar", command=confirmar).pack(pady=10)
+
+def atender_paciente():
+    if not fila_atendimento:
+        messagebox.showinfo("Fila", "Nenhum paciente para atender.")
+        return
+    paciente = fila_atendimento.popleft()
+    messagebox.showinfo(
+        "Atendimento",
+        f"Atendendo {paciente['nome']} (CPF: {paciente['cpf']}) — Horário: {paciente.get('horario', 'Não definido')}"
+    )
+
+def mostrar_fila():
+    if not fila_atendimento:
+        messagebox.showinfo("Fila", "Nenhum paciente na fila.")
+        return
+    texto = "Pacientes na fila:\n"
+    for i, p in enumerate(fila_atendimento, start=1):
+        texto += f"{i}. {p['nome']} — CPF: {p['cpf']} — Horário: {p.get('horario', 'Não definido')}\n"
+    messagebox.showinfo("Fila de atendimento", texto)
+
+# ---------------- Interface Tkinter ----------------
+root = tk.Tk()
+root.title("Clínica Vida+")
+root.geometry("540x420")
+
+titulo = tk.Label(root, text="Sistema Clínica Vida+", font=("Arial", 16, "bold"))
+titulo.pack(pady=10)
+
+frame_botoes = tk.Frame(root)
+frame_botoes.pack(pady=20)
+
+# Botões em grade (2 colunas)
+tk.Button(frame_botoes, text="Cadastrar Paciente", width=22, command=cadastrar).grid(row=0, column=0, padx=10, pady=10)
+tk.Button(frame_botoes, text="Ver Estatísticas", width=22, command=estatisticas).grid(row=0, column=1, padx=10, pady=10)
+
+tk.Button(frame_botoes, text="Buscar Paciente", width=22, command=buscar).grid(row=1, column=0, padx=10, pady=10)
+tk.Button(frame_botoes, text="Listar Pacientes", width=22, command=listar).grid(row=1, column=1, padx=10, pady=10)
+
+tk.Button(frame_botoes, text="Mostrar Fila", width=22, command=mostrar_fila).grid(row=2, column=0, padx=10, pady=10)
+tk.Button(frame_botoes, text="Adicionar à Fila", width=22, command=adicionar_na_fila).grid(row=2, column=1, padx=10, pady=10)
+
+tk.Button(frame_botoes, text="Atender Paciente", width=46, command=atender_paciente).grid(row=3, column=0, columnspan=2, pady=10)
+
+rodape = tk.Label(root, text="© 2025 Clínica Vida+", font=("Arial", 10))
+rodape.pack(side="bottom", pady=10)
+
+root.mainloop()
